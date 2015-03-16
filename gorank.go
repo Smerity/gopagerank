@@ -2,7 +2,9 @@ package main
 
 import "bufio"
 import "compress/gzip"
+import "encoding/binary"
 import "fmt"
+import "io"
 import "os"
 import "runtime"
 import "sync"
@@ -14,30 +16,29 @@ type Edge struct {
 
 var workers = 32
 
-// Necessary as all other atoi converters require allocating a string
-// Allocating a string on each line substantially slows down reading
-func bytesToUint32(s []byte) uint32 {
-	n := uint32(0)
-	p := uint32(1)
-	for i := range s {
-		n += uint32(s[len(s)-1-i]-'0') * p
-		p *= 10
-	}
-	return n
-}
-
 func sendEdges(filename string, chans [](chan Edge)) {
-	// TODO: Convert once to a varint binary format for smaller size + faster reading
 	f, _ := os.Open(filename)
+	defer f.Close()
 	gunzip, _ := gzip.NewReader(f)
-	scanner := bufio.NewScanner(gunzip)
-	scanner.Split(bufio.ScanWords)
+	// Adds the ReadByte method requird by io.ByteReader interface
+	wrappedByteReader := bufio.NewReader(gunzip)
 	i := 0
-	for scanner.Scan() {
-		eFrom := bytesToUint32(scanner.Bytes())
-		scanner.Scan()
-		eTo := bytesToUint32(scanner.Bytes())
-		chans[eFrom%uint32(len(chans))] <- Edge{uint32(eFrom), uint32(eTo)}
+	prevEdge := uint64(0)
+	for {
+		rawEdge, err := binary.ReadUvarint(wrappedByteReader)
+		// Undo the delta encoding
+		edge := rawEdge + prevEdge
+		prevEdge = edge
+		if err != nil {
+			if err == io.EOF {
+				break
+			} else {
+				panic(err)
+			}
+		}
+		eFrom := uint32(edge >> 32)
+		eTo := uint32(edge & 0xFFFFFFFF)
+		chans[eFrom%uint32(len(chans))] <- Edge{eFrom, eTo}
 		//
 		i++
 		if i%1000000 == 0 {
@@ -71,7 +72,7 @@ func main() {
 		chans[i] = make(chan Edge, 256)
 	}
 	//
-	go sendEdges("pld-arc.gz", chans)
+	go sendEdges("pld-arc.bin.gz", chans)
 	var wg sync.WaitGroup
 	for _, c := range chans {
 		wg.Add(1)
