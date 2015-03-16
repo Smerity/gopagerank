@@ -14,7 +14,7 @@ type Edge struct {
 	To   uint32
 }
 
-var workers = 32
+var workers = 31
 
 func sendEdges(filename string, chans [](chan Edge)) {
 	f, _ := os.Open(filename)
@@ -25,23 +25,24 @@ func sendEdges(filename string, chans [](chan Edge)) {
 	i := 0
 	prevEdge := uint64(0)
 	for {
+		// Read the variable integer and undo the delta encoding by adding the previous edge
 		rawEdge, err := binary.ReadUvarint(wrappedByteReader)
-		// Undo the delta encoding
 		edge := rawEdge + prevEdge
 		prevEdge = edge
-		if err != nil {
-			if err == io.EOF {
-				break
-			} else {
-				panic(err)
-			}
+		if err == io.EOF {
+			break
 		}
+		if err != nil {
+			panic(err)
+		}
+		// Seperate the two 32 bit nodes from the 64 bit edge
 		eFrom := uint32(edge >> 32)
 		eTo := uint32(edge & 0xFFFFFFFF)
+		// Edges are distributed across workers according to naive hash over source node
 		chans[eFrom%uint32(len(chans))] <- Edge{eFrom, eTo}
 		//
 		i++
-		if i%1000000 == 0 {
+		if i%1e6 == 0 {
 			fmt.Println("Edge ", i)
 		}
 	}
@@ -50,26 +51,13 @@ func sendEdges(filename string, chans [](chan Edge)) {
 	}
 }
 
-func main() {
-	runtime.GOMAXPROCS(runtime.NumCPU())
-	// We can either have total nodes supplied by the user or perform a full traversal of the data
-	var total uint32 = 42889799
-	//
-	/*
-		var src []uint32
-		var dest []uint32
-		src = make([]uint32, total, total)
-		dest = make([]uint32, total, total)
-	*/
-	var degree []uint32
-	degree = make([]uint32, total, total)
-	//
+func applyFunctionToEdges(f func(c chan Edge)) {
 	// The work for each of the workers is deposited onto their chansnnel
 	// A given node will only ever be mapped to a single worker
 	// theirhis allows preventing concurrency issues without locking
-	var chans = make([]chan Edge, workers, workers)
+	chans := make([]chan Edge, workers, workers)
 	for i := range chans {
-		chans[i] = make(chan Edge, 256)
+		chans[i] = make(chan Edge, 1024)
 	}
 	//
 	go sendEdges("pld-arc.bin.gz", chans)
@@ -77,13 +65,41 @@ func main() {
 	for _, c := range chans {
 		wg.Add(1)
 		go func(c chan Edge) {
-			for edge := range c {
-				degree[edge.From] += 1
-			}
+			f(c)
 			wg.Done()
 		}(c)
 	}
 	wg.Wait()
+}
+
+func main() {
+	runtime.GOMAXPROCS(runtime.NumCPU())
+	// We can either have total nodes supplied by the user or perform a full traversal of the data
+	total := uint32(42889799 + 1)
+	alpha := float32(0.85)
 	//
-	fmt.Println(degree[0])
+	src := make([]float32, total, total)
+	dest := make([]float32, total, total)
+	degree := make([]float32, total, total)
+	//
+	applyFunctionToEdges(func(c chan Edge) {
+		for edge := range c {
+			degree[edge.From] += 1
+		}
+	})
+	//
+	for iter := 0; iter < 20; iter++ {
+		fmt.Println("PageRank Iteration:", iter)
+		fmt.Println("Calculating the source and destination vectors")
+		for i := range dest {
+			src[i] = alpha * dest[i] / degree[i]
+			dest[i] = 1 - alpha
+		}
+		fmt.Println("Calculating the probability mass gifted by incoming edges")
+		applyFunctionToEdges(func(c chan Edge) {
+			for edge := range c {
+				dest[edge.To] += src[edge.From]
+			}
+		})
+	}
 }
