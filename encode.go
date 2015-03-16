@@ -19,6 +19,26 @@ func bytesToUint32(s []byte) uint32 {
 	return n
 }
 
+func PutU(b []byte, x uint64) int {
+	i := 0
+	shifts := []uint8{56, 48, 40, 32, 24, 16, 8}
+	for _, shift := range shifts {
+		if (x >> uint8(shift)) != 0 {
+			b[i] = 0
+			i += 1
+		}
+	}
+	for _, shift := range shifts {
+		if (x >> uint8(shift)) != 0 {
+			b[i] = byte(x >> uint8(shift))
+			i += 1
+		}
+	}
+	b[i] = byte(x)
+	i += 1
+	return i
+}
+
 func main() {
 	runtime.GOMAXPROCS(runtime.NumCPU())
 	//
@@ -30,17 +50,22 @@ func main() {
 	// Split on any whitespace (which includes field separator \t and newline \n)
 	scanner.Split(bufio.ScanWords)
 	//
-	outFile, _ := os.Create("./pld-arc.bin.gz")
-	defer outFile.Close()
-	outBuf := gzip.NewWriter(outFile)
-	defer outBuf.Close()
+	outTotal := 8
+	outFiles := make([]*os.File, outTotal, outTotal)
+	outBufs := make([]*gzip.Writer, outTotal, outTotal)
+	prevEdges := make([]uint64, outTotal, outTotal)
+	for i := 0; i < outTotal; i++ {
+		outFile, _ := os.Create(fmt.Sprintf("./pld-arc.%d.bin.gz", i))
+		outFiles[i] = outFile
+		outBufs[i] = gzip.NewWriter(outFile)
+	}
 	//
 	// This is the buffer where encoding variable integers are placed
-	var b = make([]byte, binary.MaxVarintLen64, binary.MaxVarintLen64)
+	//var b = make([]byte, binary.MaxVarintLen64, binary.MaxVarintLen64)
+	var b = make([]byte, 16)
 	i := 0
 	// We perform delta encoding (i.e. store the difference between previous and current value)
 	// so we must keep track of what the previous edge value was
-	prevEdge := uint64(0)
 	for scanner.Scan() {
 		eFrom := bytesToUint32(scanner.Bytes())
 		scanner.Scan()
@@ -57,15 +82,21 @@ func main() {
 				}
 		*/
 		// Store only the difference (delta encoding)
-		bytesWritten := binary.PutUvarint(b, edge-prevEdge)
-		binary.Write(outBuf, binary.LittleEndian, b[:bytesWritten])
-		prevEdge = edge
+		bucket := eFrom % uint32(outTotal)
+		bytesWritten := binary.PutUvarint(b, edge-prevEdges[bucket])
+		//bytesWritten := PutU(b, edge-prevEdges[bucket])
+		binary.Write(outBufs[bucket], binary.LittleEndian, b[:bytesWritten])
+		prevEdges[bucket] = edge
 		//
 		i++
-		if i%1000000 == 0 {
+		if i%1e6 == 0 {
 			fmt.Println("Edge ", i)
 			fmt.Println("Bytes written:", bytesWritten)
 		}
 	}
 	//
+	for i := 0; i < outTotal; i++ {
+		outBufs[i].Close()
+		outFiles[i].Close()
+	}
 }

@@ -3,6 +3,7 @@ package main
 import "bufio"
 import "compress/gzip"
 import "encoding/binary"
+import "fmt"
 import "io"
 import "log"
 import "os"
@@ -14,7 +15,35 @@ type Edge struct {
 	To   uint32
 }
 
-func sendEdges(filename string, chans [](chan Edge), hashOnSource bool) {
+func ReadU(r io.ByteReader) (uint64, error) {
+	var x uint64
+	var count int
+	//
+	b, err := r.ReadByte()
+	if err != nil {
+		return x, err
+	}
+	for b == 0 {
+		b, err = r.ReadByte()
+		if err != nil {
+			return x, err
+		}
+		count += 1
+	}
+	//
+	for c := 0; c < count; c++ {
+		x = (x << 8) + uint64(b)
+		b, err = r.ReadByte()
+		if err != nil {
+			return x, err
+		}
+	}
+	x = (x << 8) + uint64(b)
+	return x, nil
+}
+
+func sendEdges(filename string, hashOnSource bool, chans [](chan Edge), senderGroup *sync.WaitGroup) {
+	defer senderGroup.Done()
 	f, _ := os.Open(filename)
 	defer f.Close()
 	gunzip, _ := gzip.NewReader(f)
@@ -25,6 +54,7 @@ func sendEdges(filename string, chans [](chan Edge), hashOnSource bool) {
 	for {
 		// Read the variable integer and undo the delta encoding by adding the previous edge
 		rawEdge, err := binary.ReadUvarint(wrappedByteReader)
+		//rawEdge, err := ReadU(wrappedByteReader)
 		edge += rawEdge
 		if err == io.EOF {
 			break
@@ -44,9 +74,6 @@ func sendEdges(filename string, chans [](chan Edge), hashOnSource bool) {
 			chans[eTo%chanLen] <- Edge{eFrom, eTo}
 		}
 	}
-	for _, c := range chans {
-		close(c)
-	}
 }
 
 func applyFunctionToEdges(f func(c chan Edge), workers int, hashOnSource bool) {
@@ -56,16 +83,26 @@ func applyFunctionToEdges(f func(c chan Edge), workers int, hashOnSource bool) {
 		chans[i] = make(chan Edge, 1024)
 	}
 	//
-	go sendEdges("pld-arc.bin.gz", chans, hashOnSource)
-	var wg sync.WaitGroup
+	var senderGroup sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		senderGroup.Add(1)
+		go sendEdges(fmt.Sprintf("pld-arc.%d.bin.gz", i), hashOnSource, chans, &senderGroup)
+	}
+	//
+	var readerGroup sync.WaitGroup
 	for _, c := range chans {
-		wg.Add(1)
+		readerGroup.Add(1)
 		go func(c chan Edge) {
+			defer readerGroup.Done()
 			f(c)
-			wg.Done()
 		}(c)
 	}
-	wg.Wait()
+	//
+	senderGroup.Wait()
+	for _, c := range chans {
+		close(c)
+	}
+	readerGroup.Wait()
 }
 
 func main() {
@@ -83,10 +120,10 @@ func main() {
 		for edge := range c {
 			degree[edge.From] += 1
 		}
-	}, 31, true)
+	}, 8, true)
 	//
 	for iter := 0; iter < 20; iter++ {
-		log.Printf("PageRank Iteration: %d\n", iter)
+		log.Printf("PageRank Iteration: %d\n", iter+1)
 		log.Printf("Calculating the source and destination vectors\n")
 		for i := range dest {
 			src[i] = alpha * dest[i] / degree[i]
@@ -97,6 +134,6 @@ func main() {
 			for edge := range c {
 				dest[edge.To] += src[edge.From]
 			}
-		}, 31, false)
+		}, 8, false)
 	}
 }
