@@ -14,7 +14,8 @@ type Edge struct {
 
 var workers = 32
 
-// Necessary as all other converters required allocating a string
+// Necessary as all other atoi converters require allocating a string
+// Allocating a string on each line substantially slows down reading
 func bytesToUint32(s []byte) uint32 {
 	n := uint32(0)
 	p := uint32(1)
@@ -26,6 +27,7 @@ func bytesToUint32(s []byte) uint32 {
 }
 
 func sendEdges(filename string, chans [](chan Edge)) {
+	// TODO: Convert once to a varint binary format for smaller size + faster reading
 	f, _ := os.Open(filename)
 	gunzip, _ := gzip.NewReader(f)
 	scanner := bufio.NewScanner(gunzip)
@@ -49,6 +51,7 @@ func sendEdges(filename string, chans [](chan Edge)) {
 
 func main() {
 	runtime.GOMAXPROCS(runtime.NumCPU())
+	// We can either have total nodes supplied by the user or perform a full traversal of the data
 	var total uint32 = 42889799
 	//
 	/*
@@ -60,6 +63,9 @@ func main() {
 	var degree []uint32
 	degree = make([]uint32, total, total)
 	//
+	// The work for each of the workers is deposited onto their chansnnel
+	// A given node will only ever be mapped to a single worker
+	// theirhis allows preventing concurrency issues without locking
 	var chans = make([]chan Edge, workers, workers)
 	for i := range chans {
 		chans[i] = make(chan Edge, 256)
