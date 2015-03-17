@@ -1,7 +1,6 @@
 package main
 
 import "bufio"
-import "compress/gzip"
 import "encoding/binary"
 import "fmt"
 import "io"
@@ -31,9 +30,8 @@ func sendEdges(filename string, f func(uint32, uint32), senderGroup *sync.WaitGr
 	defer senderGroup.Done()
 	file, _ := os.Open(filename)
 	defer file.Close()
-	gunzip, _ := gzip.NewReader(file)
 	// Adds the ReadByte method requird by io.ByteReader interface
-	wrappedByteReader := bufio.NewReader(gunzip)
+	wrappedByteReader := bufio.NewReader(file)
 	edge := uint64(0)
 	edgeStore := make([]uint64, 16384, 16384)
 	for {
@@ -60,7 +58,7 @@ func applyFunctionToEdges(f func(uint32, uint32), workers int) {
 	var senderGroup sync.WaitGroup
 	for i := 0; i < 8; i++ {
 		senderGroup.Add(1)
-		go sendEdges(fmt.Sprintf("pld-arc.%d.bin.gz", i), f, &senderGroup)
+		go sendEdges(fmt.Sprintf("pld-arc.%d.bin", i), f, &senderGroup)
 	}
 	//
 	senderGroup.Wait()
