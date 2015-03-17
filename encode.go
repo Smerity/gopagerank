@@ -50,7 +50,7 @@ func main() {
 	// Split on any whitespace (which includes field separator \t and newline \n)
 	scanner.Split(bufio.ScanWords)
 	//
-	outTotal := 8
+	outTotal := 4
 	outFiles := make([]*os.File, outTotal, outTotal)
 	outBufs := make([]*bufio.Writer, outTotal, outTotal)
 	prevEdges := make([]uint64, outTotal, outTotal)
@@ -81,7 +81,7 @@ func main() {
 				}
 		*/
 		// Store only the difference (delta encoding)
-		bucket := eFrom % uint32(outTotal)
+		bucket := eTo % uint32(outTotal)
 		bytesWritten := binary.PutUvarint(b, edge-prevEdges[bucket])
 		//bytesWritten := PutU(b, edge-prevEdges[bucket])
 		binary.Write(outBufs[bucket], binary.LittleEndian, b[:bytesWritten])
