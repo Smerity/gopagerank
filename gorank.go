@@ -15,6 +15,18 @@ type Edge struct {
 	To   uint32
 }
 
+func processEdgeStore(edgeStore []uint64, f func(uint32, uint32)) {
+	for e := range edgeStore {
+		// Seperate the two 32 bit nodes from the 64 bit edge
+		eFrom := uint32(e >> 32)
+		// Converting uint64 to uint32 drops the top 32 bits
+		// Had (edge & 0xFFFFFFFF) for clarity but Go compiler doesn't optimize it away ...
+		eTo := uint32(e)
+		// Edges are distributed across workers according to either source or destination node
+		f(eFrom, eTo)
+	}
+}
+
 func sendEdges(filename string, f func(uint32, uint32), senderGroup *sync.WaitGroup) {
 	defer senderGroup.Done()
 	file, _ := os.Open(filename)
@@ -23,6 +35,7 @@ func sendEdges(filename string, f func(uint32, uint32), senderGroup *sync.WaitGr
 	// Adds the ReadByte method requird by io.ByteReader interface
 	wrappedByteReader := bufio.NewReader(gunzip)
 	edge := uint64(0)
+	edgeStore := make([]uint64, 16384, 16384)
 	for {
 		// Read the variable integer and undo the delta encoding by adding the previous edge
 		rawEdge, err := binary.ReadUvarint(wrappedByteReader)
@@ -33,14 +46,14 @@ func sendEdges(filename string, f func(uint32, uint32), senderGroup *sync.WaitGr
 		if err != nil {
 			panic(err)
 		}
-		// Seperate the two 32 bit nodes from the 64 bit edge
-		eFrom := uint32(edge >> 32)
-		// Converting uint64 to uint32 drops the top 32 bits
-		// Had (edge & 0xFFFFFFFF) for clarity but Go compiler doesn't optimize it away ...
-		eTo := uint32(edge)
-		// Edges are distributed across workers according to either source or destination node
-		f(eFrom, eTo)
+		if len(edgeStore) == cap(edgeStore) {
+			processEdgeStore(edgeStore, f)
+			// Empty the edge store
+			edgeStore = edgeStore[0:0]
+		}
+		edgeStore = append(edgeStore, edge)
 	}
+	processEdgeStore(edgeStore, f)
 }
 
 func applyFunctionToEdges(f func(uint32, uint32), workers int) {
