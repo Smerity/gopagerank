@@ -55,9 +55,8 @@ func main() {
 	outBufs := make([]*gzip.Writer, outTotal, outTotal)
 	prevEdges := make([]uint64, outTotal, outTotal)
 	for i := 0; i < outTotal; i++ {
-		outFile, _ := os.Create(fmt.Sprintf("./pld-arc.%d.bin.gz", i))
-		outFiles[i] = outFile
-		outBufs[i] = gzip.NewWriter(outFile)
+		outFiles[i], _ = os.Create(fmt.Sprintf("./pld-arc.%d.bin.gz", i))
+		outBufs[i], _ = gzip.NewWriterLevel(outFiles[i], gzip.BestCompression)
 	}
 	//
 	// This is the buffer where encoding variable integers are placed
