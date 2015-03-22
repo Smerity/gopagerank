@@ -33,7 +33,7 @@ func sendEdges(filename string, f func(uint32, uint32)) {
 	// Adds the ReadByte method requird by io.ByteReader interface
 	wrappedByteReader := bufio.NewReader(file)
 	edge := uint64(0)
-	edgeStore := make([]uint64, 16384, 16384)
+	edgeStore := make([]uint64, 0, 524288)
 	for {
 		// Read the variable integer and undo the delta encoding by adding the previous edge
 		rawEdge, err := binary.ReadUvarint(wrappedByteReader)
