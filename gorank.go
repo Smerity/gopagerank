@@ -3,12 +3,14 @@ package main
 import "bufio"
 import "encoding/binary"
 import "fmt"
+import "net/http"
 import "io"
 import "log"
 import "os"
 import "runtime"
 import "sync"
 import "sync/atomic"
+import _ "net/http/pprof"
 
 type Edge struct {
 	From uint32
@@ -70,6 +72,12 @@ func applyFunctionToEdges(f func(uint32, uint32)) {
 }
 
 func main() {
+	// Start a server for pprof so we can get CPU profiles whilst running
+	go func() {
+		log.Println("Starting pprof server at localhost:6060...")
+		log.Println(http.ListenAndServe("localhost:6060", nil))
+	}()
+	//
 	runtime.GOMAXPROCS(runtime.NumCPU())
 	// We can either have total nodes supplied by the user or perform a full traversal of the data
 	total := uint32(42889799 + 1)
