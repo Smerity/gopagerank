@@ -2,11 +2,13 @@ package main
 
 import "bufio"
 import "encoding/binary"
+import "flag"
 import "fmt"
-import "net/http"
 import "io"
 import "log"
+import "net/http"
 import "os"
+import "path/filepath"
 import "runtime"
 import "sync"
 import "sync/atomic"
@@ -56,16 +58,16 @@ func sendEdges(filename string, f func(uint32, uint32)) {
 	processEdgeStore(edgeStore, f)
 }
 
-func applyFunctionToEdges(f func(uint32, uint32)) {
+func applyFunctionToEdges(filePrefix string, f func(uint32, uint32)) {
 	var senderGroup sync.WaitGroup
-	totalParts := 4
-	for i := 0; i < totalParts; i++ {
+	edgeFiles, _ := filepath.Glob(filePrefix + ".*.bin")
+	for i, fn := range edgeFiles {
 		senderGroup.Add(1)
-		go func(i int) {
-			sendEdges(fmt.Sprintf("pld-arc.%d.bin", i), f)
-			log.Printf("Completed processing part %d of %d\n", i, totalParts)
+		go func(fn string, i int) {
+			sendEdges(fn, f)
+			log.Printf("Completed processing part %d of %d -- (%s)\n", i, len(edgeFiles), fn)
 			senderGroup.Done()
-		}(i)
+		}(fn, i)
 	}
 	//
 	senderGroup.Wait()
@@ -78,9 +80,12 @@ func main() {
 		log.Println(http.ListenAndServe("localhost:6060", nil))
 	}()
 	//
+	filePrefix := flag.String("prefix", "pld-arc", "File prefix for the edge files")
+	totalNodes := flag.Int("nodes", 42889799, "Total number of nodes in the graph")
+	flag.Parse()
 	runtime.GOMAXPROCS(runtime.NumCPU())
 	// We can either have total nodes supplied by the user or perform a full traversal of the data
-	total := uint32(42889799 + 1)
+	total := uint32(*totalNodes + 1)
 	alpha := float64(0.85)
 	saveResults := false
 	//
@@ -91,7 +96,7 @@ func main() {
 	degree := make([]uint32, total, total)
 	//
 	log.Printf("Calculating degree of each source node\n")
-	applyFunctionToEdges(func(from uint32, to uint32) {
+	applyFunctionToEdges(*filePrefix, func(from uint32, to uint32) {
 		// Atomic is necessary here as each file is partitioned on the Edge(from, to)'s "to"
 		// Different workers may try to update the same "from" in a non-atomic fashion
 		atomic.AddUint32(&degree[from], 1)
@@ -122,7 +127,7 @@ func main() {
 		}
 		// Distribute the probability mass according to the edges
 		log.Printf("Calculating the probability mass gifted by incoming edges\n")
-		applyFunctionToEdges(func(from uint32, to uint32) {
+		applyFunctionToEdges(*filePrefix, func(from uint32, to uint32) {
 			dest[to] += src[from]
 		})
 		// Replace missing probability mass from dangling nodes

@@ -3,9 +3,11 @@ package main
 import "bufio"
 import "compress/gzip"
 import "encoding/binary"
+import "flag"
 import "fmt"
 import "os"
 import "runtime"
+import "strings"
 
 // Necessary as all other atoi converters require allocating a string
 // Allocating a string on each line substantially slows down reading
@@ -42,7 +44,11 @@ func PutU(b []byte, x uint64) int {
 func main() {
 	runtime.GOMAXPROCS(runtime.NumCPU())
 	//
-	f, _ := os.Open("pld-arc.gz")
+	flagTotalFiles := flag.Int("files", 4, "Total number of files to segment the link graph into")
+	flag.Parse()
+	//
+	fn := flag.Args()[0]
+	f, _ := os.Open(fn)
 	defer f.Close()
 	gunzip, _ := gzip.NewReader(f)
 	defer gunzip.Close()
@@ -50,12 +56,14 @@ func main() {
 	// Split on any whitespace (which includes field separator \t and newline \n)
 	scanner.Split(bufio.ScanWords)
 	//
-	outTotal := 4
+	outTotal := *flagTotalFiles
 	outFiles := make([]*os.File, outTotal, outTotal)
 	outBufs := make([]*bufio.Writer, outTotal, outTotal)
 	prevEdges := make([]uint64, outTotal, outTotal)
 	for i := 0; i < outTotal; i++ {
-		outFiles[i], _ = os.Create(fmt.Sprintf("./pld-arc.%d.bin", i))
+		outFn := fmt.Sprintf(strings.TrimSuffix(fn, ".gz")+".%d.bin", i)
+		fmt.Println("Opening output file " + outFn)
+		outFiles[i], _ = os.Create(outFn)
 		outBufs[i] = bufio.NewWriter(outFiles[i])
 	}
 	//
@@ -93,6 +101,7 @@ func main() {
 			fmt.Println("Bytes written:", bytesWritten)
 		}
 	}
+	fmt.Println("Total edges processed: ", i)
 	//
 	for i := 0; i < outTotal; i++ {
 		outBufs[i].Flush()
